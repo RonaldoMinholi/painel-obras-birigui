@@ -438,11 +438,11 @@ function renderAdmin() {
             <div class="field"><label for="start-date">Data de início</label><input id="start-date" type="date" /></div>
             <div class="field"><label for="deadline">Prazo previsto</label><input id="deadline" type="date" /></div>
             <div class="field"><label for="unit">Unidade da meta</label><input id="unit" type="text" placeholder="Ex.: ruas, bairros, obras" required /></div>
-            <div class="field"><label for="budget">Orçamento previsto (R$)</label><input id="budget" type="number" min="0" step="1000" required /></div>
+            <div class="field"><label for="budget">Orçamento previsto (R$)</label><input id="budget" type="number" min="0" step="0.01" required /></div>
             <div class="field"><label for="completed">Quantidade realizada</label><input id="completed" type="number" min="0" step="1" required /></div>
             <div class="field"><label for="target">Meta</label><input id="target" type="number" min="1" step="1" required /></div>
             <div class="field"><label for="status">Situação</label><select id="status">${Object.entries(statusLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>
-            <div class="field"><label for="spent">Valor executado (R$)</label><input id="spent" type="number" min="0" step="1000" required /></div>
+            <div class="field"><label for="spent">Valor executado (R$)</label><input id="spent" type="number" min="0" step="0.01" required /></div>
             <div class="field full"><label for="next-step">Próxima etapa</label><textarea id="next-step"></textarea></div>
             <div class="field full"><label for="issue">Problema ou impedimento</label><textarea id="issue"></textarea></div>
           </div>
@@ -597,8 +597,14 @@ function renderAdmin() {
   deleteButton.addEventListener("click", async () => {
     const project = projects[Number(select.value)];
     if (!project) return;
-    const confirmed = window.confirm(`Excluir permanentemente o projeto “${project.name}”?`);
-    if (!confirmed) return;
+    const typedName = window.prompt(
+      `Esta exclusão é permanente. Para excluir, digite exatamente o nome do projeto:\n\n${project.name}`
+    );
+    if (typedName === null) return;
+    if (typedName.trim() !== project.name) {
+      showToast("Exclusão cancelada: o nome digitado não corresponde ao projeto.", true);
+      return;
+    }
 
     deleteButton.disabled = true;
     deleteButton.textContent = "Excluindo...";
