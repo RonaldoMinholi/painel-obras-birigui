@@ -123,6 +123,22 @@ function percentage(project) {
   ));
 }
 
+function createUniqueSlug(name) {
+  const base = String(name || "projeto")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "") || "projeto";
+  let candidate = base;
+  let suffix = 2;
+  while (projects.some(project => project.slug === candidate)) {
+    candidate = `${base}-${suffix}`;
+    suffix += 1;
+  }
+  return candidate;
+}
+
 function dashboardControls() {
   return `
     <div class="view-controls" aria-label="Modo de exibição">
@@ -405,25 +421,38 @@ function renderAdmin() {
       ${header(false)}
       <section class="admin-wrap">
         <div class="admin-intro">
-          <div><h2>Atualização dos projetos</h2><p>Escolha um projeto, altere os dados e salve. A televisão receberá a atualização automaticamente.</p></div>
+          <div><h2>Gerenciamento dos projetos</h2><p>Cadastre ou atualize projetos. A televisão receberá as alterações automaticamente.</p></div>
           <span class="status no-prazo">Conectado ao Supabase</span>
+        </div>
+        <div class="admin-tabs" role="tablist" aria-label="Ação administrativa">
+          <button class="admin-tab active" id="edit-mode" type="button">Atualizar projeto</button>
+          <button class="admin-tab" id="create-mode" type="button">Novo projeto</button>
         </div>
         <form class="admin-card" id="project-form">
           <div class="form-grid">
-            <div class="field full"><label for="project-select">Projeto</label><select id="project-select">${projects.map((project, index) => `<option value="${index}">${h(project.name)}</option>`).join("")}</select></div>
+            <div class="field full" id="project-select-field"><label for="project-select">Projeto</label><select id="project-select">${projects.map((project, index) => `<option value="${index}">${h(project.name)}</option>`).join("")}</select></div>
+            <div class="field full"><label for="name">Nome do projeto</label><input id="name" type="text" required /></div>
+            <div class="field full"><label for="description">Descrição</label><textarea id="description"></textarea></div>
+            <div class="field"><label for="location">Localização</label><input id="location" type="text" /></div>
+            <div class="field"><label for="responsible">Responsável</label><input id="responsible" type="text" /></div>
+            <div class="field"><label for="start-date">Data de início</label><input id="start-date" type="date" /></div>
+            <div class="field"><label for="deadline">Prazo previsto</label><input id="deadline" type="date" /></div>
+            <div class="field"><label for="unit">Unidade da meta</label><input id="unit" type="text" placeholder="Ex.: ruas, bairros, obras" required /></div>
+            <div class="field"><label for="budget">Orçamento previsto (R$)</label><input id="budget" type="number" min="0" step="1000" required /></div>
             <div class="field"><label for="completed">Quantidade realizada</label><input id="completed" type="number" min="0" step="1" required /></div>
             <div class="field"><label for="target">Meta</label><input id="target" type="number" min="1" step="1" required /></div>
             <div class="field"><label for="status">Situação</label><select id="status">${Object.entries(statusLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>
             <div class="field"><label for="spent">Valor executado (R$)</label><input id="spent" type="number" min="0" step="1000" required /></div>
-            <div class="field full"><label for="next-step">Próxima etapa</label><textarea id="next-step" required></textarea></div>
-            <div class="field full"><label for="issue">Problema ou impedimento</label><textarea id="issue" required></textarea></div>
+            <div class="field full"><label for="next-step">Próxima etapa</label><textarea id="next-step"></textarea></div>
+            <div class="field full"><label for="issue">Problema ou impedimento</label><textarea id="issue"></textarea></div>
           </div>
           <div class="form-summary">
             <div class="summary-box"><span>Progresso calculado</span><strong id="summary-progress">0%</strong></div>
             <div class="summary-box"><span>Quantidade restante</span><strong id="summary-remaining">0</strong></div>
             <div class="summary-box"><span>Atualização</span><strong>Agora</strong></div>
           </div>
-          <div class="form-actions form-actions-end">
+          <div class="form-actions">
+            <button class="btn btn-danger" id="delete-button" type="button">Excluir projeto</button>
             <button class="btn btn-primary" id="save-button" type="submit">Salvar atualização</button>
           </div>
         </form>
@@ -432,9 +461,22 @@ function renderAdmin() {
 
   bindLogout();
   const select = document.querySelector("#project-select");
+  const selectField = document.querySelector("#project-select-field");
   const form = document.querySelector("#project-form");
   const saveButton = document.querySelector("#save-button");
+  const deleteButton = document.querySelector("#delete-button");
+  const editModeButton = document.querySelector("#edit-mode");
+  const createModeButton = document.querySelector("#create-mode");
+  let isCreating = projects.length === 0;
   const fields = {
+    name: document.querySelector("#name"),
+    description: document.querySelector("#description"),
+    location: document.querySelector("#location"),
+    responsible: document.querySelector("#responsible"),
+    startDate: document.querySelector("#start-date"),
+    deadline: document.querySelector("#deadline"),
+    unit: document.querySelector("#unit"),
+    budget: document.querySelector("#budget"),
     completed: document.querySelector("#completed"),
     target: document.querySelector("#target"),
     status: document.querySelector("#status"),
@@ -445,10 +487,34 @@ function renderAdmin() {
 
   function fillForm() {
     const project = projects[Number(select.value)];
+    if (!project) return;
     Object.entries(fields).forEach(([key, field]) => {
       field.value = project[key] ?? "";
     });
     updateSummary();
+  }
+
+  function clearForm() {
+    form.reset();
+    fields.status.value = "nao-iniciado";
+    fields.completed.value = 0;
+    fields.target.value = 1;
+    fields.budget.value = 0;
+    fields.spent.value = 0;
+    fields.responsible.value = "Secretaria Municipal de Obras";
+    fields.issue.value = "Nenhum impedimento relevante.";
+    updateSummary();
+  }
+
+  function setFormMode(nextMode) {
+    isCreating = nextMode === "create";
+    editModeButton.classList.toggle("active", !isCreating);
+    createModeButton.classList.toggle("active", isCreating);
+    selectField.hidden = isCreating;
+    deleteButton.hidden = isCreating;
+    saveButton.textContent = isCreating ? "Cadastrar projeto" : "Salvar atualização";
+    if (isCreating) clearForm();
+    else fillForm();
   }
 
   function updateSummary() {
@@ -462,6 +528,8 @@ function renderAdmin() {
   }
 
   select.addEventListener("change", fillForm);
+  editModeButton.addEventListener("click", () => setFormMode("edit"));
+  createModeButton.addEventListener("click", () => setFormMode("create"));
   fields.completed.addEventListener("input", updateSummary);
   fields.target.addEventListener("input", updateSummary);
 
@@ -469,7 +537,15 @@ function renderAdmin() {
     event.preventDefault();
     const index = Number(select.value);
     const project = projects[index];
-    const update = {
+    const values = {
+      name: fields.name.value.trim(),
+      description: fields.description.value.trim() || null,
+      location: fields.location.value.trim() || null,
+      responsible: fields.responsible.value.trim() || null,
+      start_date: fields.startDate.value || null,
+      deadline: fields.deadline.value || null,
+      unit: fields.unit.value.trim(),
+      budget: Number(fields.budget.value),
       completed: Number(fields.completed.value),
       target: Number(fields.target.value),
       status: fields.status.value,
@@ -480,38 +556,66 @@ function renderAdmin() {
     };
 
     saveButton.disabled = true;
-    saveButton.textContent = "Salvando...";
-    const { data, error } = await db
-      .from("projects")
-      .update(update)
-      .eq("id", project.id)
-      .select()
-      .single();
+    saveButton.textContent = isCreating ? "Cadastrando..." : "Salvando...";
+    const query = isCreating
+      ? db.from("projects").insert({ ...values, slug: createUniqueSlug(values.name), department: "Secretaria de Obras" })
+      : db.from("projects").update(values).eq("id", project.id);
+    const { data, error } = await query.select().single();
 
     if (error) {
       showToast(`Não foi possível salvar: ${error.message}`, true);
       saveButton.disabled = false;
-      saveButton.textContent = "Salvar atualização";
+      saveButton.textContent = isCreating ? "Cadastrar projeto" : "Salvar atualização";
       return;
     }
 
-    const historyResult = await db.from("project_updates").insert({
-      project_id: project.id,
-      completed: update.completed,
-      spent: update.spent,
-      status: update.status,
-      next_step: update.next_step,
-      issue: update.issue
-    });
-    if (historyResult.error) console.error("Histórico não registrado", historyResult.error);
+    if (!isCreating) {
+      const historyResult = await db.from("project_updates").insert({
+        project_id: project.id,
+        completed: values.completed,
+        spent: values.spent,
+        status: values.status,
+        next_step: values.next_step,
+        issue: values.issue
+      });
+      if (historyResult.error) console.error("Histórico não registrado", historyResult.error);
+    }
 
-    projects[index] = toProject(data);
-    saveButton.disabled = false;
-    saveButton.textContent = "Salvar atualização";
-    showToast("Atualização salva. O painel da TV já recebeu os novos dados.");
+    await fetchProjects();
+    const savedIndex = projects.findIndex(item => item.id === data.id);
+    renderAdmin();
+    const refreshedSelect = document.querySelector("#project-select");
+    if (savedIndex >= 0 && refreshedSelect) {
+      refreshedSelect.value = String(savedIndex);
+      refreshedSelect.dispatchEvent(new Event("change"));
+    }
+    showToast(isCreating
+      ? "Projeto cadastrado. Ele já aparece no painel da TV."
+      : "Atualização salva. O painel da TV já recebeu os novos dados.");
   });
 
-  fillForm();
+  deleteButton.addEventListener("click", async () => {
+    const project = projects[Number(select.value)];
+    if (!project) return;
+    const confirmed = window.confirm(`Excluir permanentemente o projeto “${project.name}”?`);
+    if (!confirmed) return;
+
+    deleteButton.disabled = true;
+    deleteButton.textContent = "Excluindo...";
+    const { error } = await db.from("projects").delete().eq("id", project.id);
+    if (error) {
+      showToast(`Não foi possível excluir: ${error.message}`, true);
+      deleteButton.disabled = false;
+      deleteButton.textContent = "Excluir projeto";
+      return;
+    }
+
+    await fetchProjects();
+    renderAdmin();
+    showToast("Projeto excluído do painel.");
+  });
+
+  setFormMode(isCreating ? "create" : "edit");
   updateClock();
 }
 

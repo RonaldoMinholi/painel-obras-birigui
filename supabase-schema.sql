@@ -50,6 +50,16 @@ to authenticated
 using (true)
 with check (true);
 
+create policy "Usuários autenticados cadastram projetos"
+on public.projects for insert
+to authenticated
+with check (true);
+
+create policy "Usuários autenticados excluem projetos"
+on public.projects for delete
+to authenticated
+using (true);
+
 create policy "Usuários autenticados registram histórico"
 on public.project_updates for insert
 to authenticated
@@ -62,7 +72,7 @@ using (true);
 
 grant usage on schema public to anon, authenticated;
 grant select on public.projects to anon, authenticated;
-grant update on public.projects to authenticated;
+grant insert, update, delete on public.projects to authenticated;
 grant select, insert on public.project_updates to authenticated;
 grant usage, select on all sequences in schema public to authenticated;
 

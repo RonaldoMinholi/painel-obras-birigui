@@ -12,6 +12,8 @@ Abra um servidor local nesta pasta e acesse:
 
 Os dados fictícios ficam no Supabase. O painel tem leitura pública e recebe alterações em tempo real. O formulário exige um usuário cadastrado no Supabase Authentication.
 
+A área administrativa permite cadastrar, editar e excluir projetos. Em instalações antigas, execute uma única vez o arquivo `supabase-crud-upgrade.sql` para autorizar essas operações sem recriar as tabelas.
+
 ## Modos de exibição
 
 - **Automático:** destaca um projeto por vez e alterna no intervalo selecionado.

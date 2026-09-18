@@ -149,6 +149,9 @@ button { cursor: pointer; }
 .admin-intro h2 { margin: 0 0 5px; font-size: 30px; }
 .admin-intro p { margin: 0; color: var(--muted); }
 .admin-card { padding: 24px; }
+.admin-tabs { display: inline-flex; gap: 4px; margin-bottom: 12px; padding: 4px; border: 1px solid var(--line); border-radius: 12px; background: #e5ebf2; }
+.admin-tab { border: 0; border-radius: 9px; padding: 10px 15px; color: var(--muted); background: transparent; font-weight: 700; }
+.admin-tab.active { color: #fff; background: var(--navy-2); }
 .form-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 17px; }
 .field.full { grid-column: 1 / -1; }
 .field label { display: block; font-size: 13px; font-weight: 700; margin-bottom: 7px; }
@@ -164,6 +167,7 @@ button { cursor: pointer; }
 .summary-box strong { display: block; font-size: 20px; margin-top: 4px; }
 .form-actions { display: flex; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); padding-top: 20px; }
 .form-actions-end { justify-content: flex-end; }
+[hidden] { display: none !important; }
 .toast { position: fixed; right: 24px; bottom: 24px; background: var(--navy); color: white; padding: 14px 18px; border-radius: 12px; box-shadow: 0 12px 35px rgba(0,0,0,.22); }
 .toast-error { background: #8f2626; }
 .loading-screen, .message-screen { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 14px; text-align: center; padding: 30px; }
