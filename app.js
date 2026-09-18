@@ -269,8 +269,6 @@ function overviewCard(project) {
       <div class="overview-details">
         <div><span>Prazo</span><strong>${formatDate(project.deadline)}</strong></div>
         <div><span>Executado</span><strong>${formatCurrency(project.spent)}</strong></div>
-        <div class="wide"><span>Próxima etapa</span><strong>${h(project.nextStep)}</strong></div>
-        <div class="wide"><span>Impedimento</span><strong>${h(project.issue)}</strong></div>
       </div>
       <p class="overview-updated">Atualizado em ${formatDateTime(project.updatedAt)}</p>
     </article>`;
