@@ -12,6 +12,13 @@ Abra um servidor local nesta pasta e acesse:
 
 Os dados fictícios ficam no Supabase. O painel tem leitura pública e recebe alterações em tempo real. O formulário exige um usuário cadastrado no Supabase Authentication.
 
+## Modos de exibição
+
+- **Automático:** destaca um projeto por vez e alterna no intervalo selecionado.
+- **Visão geral:** mostra até seis projetos simultaneamente. Se houver mais de seis, alterna entre grupos.
+- O intervalo pode ser definido em 10, 20 ou 30 segundos.
+- O navegador memoriza o modo e o intervalo escolhidos, inclusive na televisão.
+
 ## Configuração
 
 1. Executar o arquivo `supabase-schema.sql` em um projeto vazio.

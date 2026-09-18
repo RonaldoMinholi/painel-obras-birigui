@@ -19,9 +19,35 @@ const adminMode = params.get("modo") === "admin";
 const tvMode = params.get("tv") === "1";
 if (tvMode) document.body.classList.add("tv-mode");
 
+const DISPLAY_MODE_KEY = "painel-obras-display-mode";
+const ROTATION_INTERVAL_KEY = "painel-obras-rotation-interval";
+const ROTATION_INTERVALS = [10, 20, 30];
+const OVERVIEW_PAGE_SIZE = 6;
+
+function readPreference(key, fallback) {
+  try {
+    return localStorage.getItem(key) || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function savePreference(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch {
+    // O painel continua funcionando mesmo se o navegador bloquear o armazenamento local.
+  }
+}
+
 let projects = [];
 let activeIndex = 0;
-let secondsLeft = 12;
+let displayMode = readPreference(DISPLAY_MODE_KEY, "auto");
+if (!["auto", "overview"].includes(displayMode)) displayMode = "auto";
+let rotationInterval = Number(readPreference(ROTATION_INTERVAL_KEY, "10"));
+if (!ROTATION_INTERVALS.includes(rotationInterval)) rotationInterval = 10;
+let secondsLeft = rotationInterval;
+let overviewPage = 0;
 let rotationTimer;
 let realtimeChannel;
 let currentSession = null;
@@ -97,7 +123,23 @@ function percentage(project) {
   ));
 }
 
-function header(showAdminLink = true) {
+function dashboardControls() {
+  return `
+    <div class="view-controls" aria-label="Modo de exibição">
+      <div class="mode-switch">
+        <button type="button" class="view-mode-button ${displayMode === "auto" ? "active" : ""}" data-view-mode="auto">Automático</button>
+        <button type="button" class="view-mode-button ${displayMode === "overview" ? "active" : ""}" data-view-mode="overview">Visão geral</button>
+      </div>
+      <label class="interval-control" for="rotation-interval">
+        <span>Intervalo</span>
+        <select id="rotation-interval">
+          ${ROTATION_INTERVALS.map(value => `<option value="${value}" ${value === rotationInterval ? "selected" : ""}>${value}s</option>`).join("")}
+        </select>
+      </label>
+    </div>`;
+}
+
+function header(showAdminLink = true, showDashboardControls = false) {
   const action = showAdminLink
     ? '<a class="btn btn-light" href="?modo=admin">Atualizar dados</a>'
     : `<div class="admin-actions"><a class="btn btn-light" href="index.html">Ver painel</a>${currentSession ? '<button class="btn btn-ghost" id="logout" type="button">Sair</button>' : ""}</div>`;
@@ -113,6 +155,7 @@ function header(showAdminLink = true) {
       </div>
       <div class="top-actions">
         <div class="live-badge"><i></i> Dados em tempo real</div>
+        ${showDashboardControls ? dashboardControls() : ""}
         <div class="clock"><strong id="clock-time">--:--</strong><span id="clock-date">Carregando data</span></div>
         ${action}
       </div>
@@ -148,13 +191,7 @@ function renderError(error) {
     </div>`;
 }
 
-function renderDashboard() {
-  if (!projects.length) {
-    app.innerHTML = `${header(true)}<div class="message-screen"><h2>Nenhum projeto cadastrado</h2></div>`;
-    return;
-  }
-
-  const active = projects[activeIndex];
+function dashboardStats() {
   const totalBudget = projects.reduce((sum, item) => sum + Number(item.budget || 0), 0);
   const totalSpent = projects.reduce((sum, item) => sum + Number(item.spent || 0), 0);
   const attention = projects.filter(item => item.status === "atencao").length;
@@ -164,60 +201,147 @@ function renderDashboard() {
   );
   const investment = totalBudget ? Math.round((totalSpent / totalBudget) * 100) : 0;
 
+  return `
+    <div class="stats">
+      <article class="stat"><span class="stat-label">Projetos acompanhados</span><strong class="stat-value">${projects.length}</strong><span class="stat-context">Secretaria de Obras</span></article>
+      <article class="stat"><span class="stat-label">Progresso médio</span><strong class="stat-value">${average}%</strong><span class="stat-context">Média dos projetos</span></article>
+      <article class="stat"><span class="stat-label">Em atenção</span><strong class="stat-value">${attention}</strong><span class="stat-context">Exigem acompanhamento</span></article>
+      <article class="stat"><span class="stat-label">Atrasados</span><strong class="stat-value">${delayed}</strong><span class="stat-context">Prazo comprometido</span></article>
+      <article class="stat"><span class="stat-label">Investimento executado</span><strong class="stat-value">${investment}%</strong><span class="stat-context">${formatCurrency(totalSpent)} de ${formatCurrency(totalBudget)}</span></article>
+    </div>`;
+}
+
+function automaticView() {
+  const active = projects[activeIndex];
+  return `
+    <div class="focus-grid">
+      <article class="focus-card">
+        <div class="focus-head">
+          <div><span class="section-label">Projeto em destaque</span><h2>${h(active.name)}</h2><p class="location">${h(active.location)}</p></div>
+          <span class="status ${h(active.status)}">${h(statusLabels[active.status] || active.status)}</span>
+        </div>
+        <div class="progress-block">
+          <div class="progress-top"><strong>${percentage(active)}%</strong><span>${formatNumber(active.completed)} de ${formatNumber(active.target)} ${h(active.unit)}</span></div>
+          <div class="progress"><div class="progress-bar" style="width:${percentage(active)}%"></div></div>
+        </div>
+        <div class="numbers">
+          <div class="number-box"><span>Meta</span><strong>${formatNumber(active.target)} ${h(active.unit)}</strong></div>
+          <div class="number-box"><span>Realizado</span><strong>${formatNumber(active.completed)} ${h(active.unit)}</strong></div>
+          <div class="number-box"><span>Restante</span><strong>${formatNumber(Math.max(0, active.target - active.completed))} ${h(active.unit)}</strong></div>
+        </div>
+        <div class="details">
+          <div class="detail"><span>Próxima etapa</span><strong>${h(active.nextStep)}</strong></div>
+          <div class="detail"><span>Impedimento atual</span><strong>${h(active.issue)}</strong></div>
+          <div class="detail"><span>Responsável</span><strong>${h(active.responsible)}</strong></div>
+          <div class="detail"><span>Prazo previsto</span><strong>${formatDate(active.deadline)}</strong></div>
+          <div class="detail"><span>Orçamento previsto</span><strong>${formatCurrency(active.budget)}</strong></div>
+          <div class="detail"><span>Valor executado</span><strong>${formatCurrency(active.spent)}</strong></div>
+        </div>
+      </article>
+
+      <aside class="project-list">
+        <div class="list-head"><h3>Projetos</h3><span class="countdown">Alterna em <b id="countdown">${secondsLeft}</b>s</span></div>
+        ${projects.map((project, index) => `
+          <button class="project-item ${index === activeIndex ? "active" : ""}" data-index="${index}">
+            <strong>${h(project.name)}</strong>
+            <span class="item-meta"><span>${h(statusLabels[project.status] || project.status)}</span><span>${percentage(project)}%</span></span>
+          </button>`).join("")}
+        <p class="updated">Última atualização: ${formatDateTime(active.updatedAt)}</p>
+      </aside>
+    </div>`;
+}
+
+function overviewCard(project) {
+  const remaining = Math.max(0, project.target - project.completed);
+  return `
+    <article class="overview-card">
+      <div class="overview-card-head">
+        <div><h3>${h(project.name)}</h3><p>${h(project.location)}</p></div>
+        <span class="status ${h(project.status)}">${h(statusLabels[project.status] || project.status)}</span>
+      </div>
+      <div class="overview-progress-head"><strong>${percentage(project)}%</strong><span>${formatNumber(project.completed)} de ${formatNumber(project.target)} ${h(project.unit)}</span></div>
+      <div class="progress compact"><div class="progress-bar" style="width:${percentage(project)}%"></div></div>
+      <div class="overview-numbers">
+        <div><span>Meta</span><strong>${formatNumber(project.target)}</strong></div>
+        <div><span>Realizado</span><strong>${formatNumber(project.completed)}</strong></div>
+        <div><span>Restante</span><strong>${formatNumber(remaining)}</strong></div>
+      </div>
+      <div class="overview-details">
+        <div><span>Prazo</span><strong>${formatDate(project.deadline)}</strong></div>
+        <div><span>Executado</span><strong>${formatCurrency(project.spent)}</strong></div>
+        <div class="wide"><span>Próxima etapa</span><strong>${h(project.nextStep)}</strong></div>
+        <div class="wide"><span>Impedimento</span><strong>${h(project.issue)}</strong></div>
+      </div>
+      <p class="overview-updated">Atualizado em ${formatDateTime(project.updatedAt)}</p>
+    </article>`;
+}
+
+function overviewView() {
+  const totalPages = Math.max(1, Math.ceil(projects.length / OVERVIEW_PAGE_SIZE));
+  if (overviewPage >= totalPages) overviewPage = 0;
+  const start = overviewPage * OVERVIEW_PAGE_SIZE;
+  const pageProjects = projects.slice(start, start + OVERVIEW_PAGE_SIZE);
+  const end = Math.min(start + OVERVIEW_PAGE_SIZE, projects.length);
+  const pageStatus = totalPages > 1
+    ? `<span>Projetos ${start + 1}–${end} de ${projects.length} · próxima página em <b id="countdown">${secondsLeft}</b>s</span>`
+    : `<span>Todos os ${projects.length} projetos em andamento</span>`;
+
+  return `
+    <section class="overview-section">
+      <div class="overview-heading">
+        <div><span class="section-label">Visão geral</span><h2>Consolidado dos projetos</h2></div>
+        <div class="overview-page-status">${pageStatus}</div>
+      </div>
+      <div class="overview-grid">${pageProjects.map(overviewCard).join("")}</div>
+    </section>`;
+}
+
+function bindDashboardControls() {
+  document.querySelectorAll("[data-view-mode]").forEach(button => {
+    button.addEventListener("click", () => {
+      const nextMode = button.dataset.viewMode;
+      if (nextMode === displayMode) return;
+      displayMode = nextMode;
+      savePreference(DISPLAY_MODE_KEY, displayMode);
+      activeIndex = 0;
+      overviewPage = 0;
+      secondsLeft = rotationInterval;
+      renderDashboard();
+      startRotation();
+    });
+  });
+
+  document.querySelector("#rotation-interval")?.addEventListener("change", event => {
+    const nextInterval = Number(event.target.value);
+    if (!ROTATION_INTERVALS.includes(nextInterval)) return;
+    rotationInterval = nextInterval;
+    secondsLeft = rotationInterval;
+    savePreference(ROTATION_INTERVAL_KEY, String(rotationInterval));
+    renderDashboard();
+    startRotation();
+  });
+}
+
+function renderDashboard() {
+  if (!projects.length) {
+    app.innerHTML = `${header(true, true)}<div class="message-screen"><h2>Nenhum projeto cadastrado</h2></div>`;
+    return;
+  }
+
   app.innerHTML = `
     <div class="shell">
-      ${header(true)}
+      ${header(true, true)}
       <section class="dashboard">
-        <div class="stats">
-          <article class="stat"><span class="stat-label">Projetos acompanhados</span><strong class="stat-value">${projects.length}</strong><span class="stat-context">Secretaria de Obras</span></article>
-          <article class="stat"><span class="stat-label">Progresso médio</span><strong class="stat-value">${average}%</strong><span class="stat-context">Média dos projetos</span></article>
-          <article class="stat"><span class="stat-label">Em atenção</span><strong class="stat-value">${attention}</strong><span class="stat-context">Exigem acompanhamento</span></article>
-          <article class="stat"><span class="stat-label">Atrasados</span><strong class="stat-value">${delayed}</strong><span class="stat-context">Prazo comprometido</span></article>
-          <article class="stat"><span class="stat-label">Investimento executado</span><strong class="stat-value">${investment}%</strong><span class="stat-context">${formatCurrency(totalSpent)} de ${formatCurrency(totalBudget)}</span></article>
-        </div>
-
-        <div class="focus-grid">
-          <article class="focus-card">
-            <div class="focus-head">
-              <div><span class="section-label">Projeto em destaque</span><h2>${h(active.name)}</h2><p class="location">${h(active.location)}</p></div>
-              <span class="status ${h(active.status)}">${h(statusLabels[active.status] || active.status)}</span>
-            </div>
-            <div class="progress-block">
-              <div class="progress-top"><strong>${percentage(active)}%</strong><span>${formatNumber(active.completed)} de ${formatNumber(active.target)} ${h(active.unit)}</span></div>
-              <div class="progress"><div class="progress-bar" style="width:${percentage(active)}%"></div></div>
-            </div>
-            <div class="numbers">
-              <div class="number-box"><span>Meta</span><strong>${formatNumber(active.target)} ${h(active.unit)}</strong></div>
-              <div class="number-box"><span>Realizado</span><strong>${formatNumber(active.completed)} ${h(active.unit)}</strong></div>
-              <div class="number-box"><span>Restante</span><strong>${formatNumber(Math.max(0, active.target - active.completed))} ${h(active.unit)}</strong></div>
-            </div>
-            <div class="details">
-              <div class="detail"><span>Próxima etapa</span><strong>${h(active.nextStep)}</strong></div>
-              <div class="detail"><span>Impedimento atual</span><strong>${h(active.issue)}</strong></div>
-              <div class="detail"><span>Responsável</span><strong>${h(active.responsible)}</strong></div>
-              <div class="detail"><span>Prazo previsto</span><strong>${formatDate(active.deadline)}</strong></div>
-              <div class="detail"><span>Orçamento previsto</span><strong>${formatCurrency(active.budget)}</strong></div>
-              <div class="detail"><span>Valor executado</span><strong>${formatCurrency(active.spent)}</strong></div>
-            </div>
-          </article>
-
-          <aside class="project-list">
-            <div class="list-head"><h3>Projetos</h3><span class="countdown">Alterna em <b id="countdown">${secondsLeft}</b>s</span></div>
-            ${projects.map((project, index) => `
-              <button class="project-item ${index === activeIndex ? "active" : ""}" data-index="${index}">
-                <strong>${h(project.name)}</strong>
-                <span class="item-meta"><span>${h(statusLabels[project.status] || project.status)}</span><span>${percentage(project)}%</span></span>
-              </button>`).join("")}
-            <p class="updated">Última atualização: ${formatDateTime(active.updatedAt)}</p>
-          </aside>
-        </div>
+        ${dashboardStats()}
+        ${displayMode === "overview" ? overviewView() : automaticView()}
       </section>
     </div>`;
 
+  bindDashboardControls();
   document.querySelectorAll(".project-item").forEach(button => {
     button.addEventListener("click", () => {
       activeIndex = Number(button.dataset.index);
-      secondsLeft = 12;
+      secondsLeft = rotationInterval;
       renderDashboard();
     });
   });
@@ -410,8 +534,13 @@ function startRotation() {
     const countdown = document.querySelector("#countdown");
     if (countdown) countdown.textContent = secondsLeft;
     if (secondsLeft <= 0 && projects.length) {
-      activeIndex = (activeIndex + 1) % projects.length;
-      secondsLeft = 12;
+      if (displayMode === "overview") {
+        const totalPages = Math.ceil(projects.length / OVERVIEW_PAGE_SIZE);
+        if (totalPages > 1) overviewPage = (overviewPage + 1) % totalPages;
+      } else {
+        activeIndex = (activeIndex + 1) % projects.length;
+      }
+      secondsLeft = rotationInterval;
       renderDashboard();
     }
   }, 1000);
