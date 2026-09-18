@@ -1,0 +1,464 @@
+const SUPABASE_URL = "https://hzvkdlhezowxlirpdylx.supabase.co";
+const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_ZGNH95JK7dol53IjEU8I6w__0GpswkK";
+
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+  auth: { persistSession: true, autoRefreshToken: true }
+});
+
+const statusLabels = {
+  "no-prazo": "Dentro do prazo",
+  "atencao": "Em atenção",
+  "atrasado": "Atrasado",
+  "concluido": "Concluído",
+  "nao-iniciado": "Não iniciado"
+};
+
+const app = document.querySelector("#app");
+const params = new URLSearchParams(location.search);
+const adminMode = params.get("modo") === "admin";
+const tvMode = params.get("tv") === "1";
+if (tvMode) document.body.classList.add("tv-mode");
+
+let projects = [];
+let activeIndex = 0;
+let secondsLeft = 12;
+let rotationTimer;
+let realtimeChannel;
+let currentSession = null;
+
+function h(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function toProject(row) {
+  return {
+    id: row.id,
+    slug: row.slug,
+    name: row.name,
+    description: row.description,
+    location: row.location,
+    responsible: row.responsible,
+    startDate: row.start_date,
+    deadline: row.deadline,
+    unit: row.unit,
+    target: Number(row.target),
+    completed: Number(row.completed),
+    budget: Number(row.budget),
+    spent: Number(row.spent),
+    status: row.status,
+    nextStep: row.next_step,
+    issue: row.issue,
+    updatedAt: row.updated_at
+  };
+}
+
+async function fetchProjects() {
+  const { data, error } = await db.from("projects").select("*").order("id");
+  if (error) throw error;
+  projects = (data || []).map(toProject);
+  if (activeIndex >= projects.length) activeIndex = 0;
+}
+
+function formatCurrency(value) {
+  return new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+    maximumFractionDigits: 0
+  }).format(Number(value) || 0);
+}
+
+function formatNumber(value) {
+  return new Intl.NumberFormat("pt-BR").format(Number(value) || 0);
+}
+
+function formatDate(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("pt-BR", { timeZone: "UTC" })
+    .format(new Date(`${value}T12:00:00Z`));
+}
+
+function formatDateTime(value) {
+  if (!value) return "—";
+  return new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short"
+  }).format(new Date(value));
+}
+
+function percentage(project) {
+  if (!Number(project.target)) return 0;
+  return Math.max(0, Math.min(100,
+    Math.round((Number(project.completed) / Number(project.target)) * 100)
+  ));
+}
+
+function header(showAdminLink = true) {
+  const action = showAdminLink
+    ? '<a class="btn btn-light" href="?modo=admin">Atualizar dados</a>'
+    : `<div class="admin-actions"><a class="btn btn-light" href="index.html">Ver painel</a>${currentSession ? '<button class="btn btn-ghost" id="logout" type="button">Sair</button>' : ""}</div>`;
+
+  return `
+    <header class="topbar">
+      <div class="brand">
+        <div class="brand-mark">BO</div>
+        <div>
+          <p class="eyebrow">Painel executivo municipal</p>
+          <h1>Secretaria de Obras</h1>
+        </div>
+      </div>
+      <div class="top-actions">
+        <div class="live-badge"><i></i> Dados em tempo real</div>
+        <div class="clock"><strong id="clock-time">--:--</strong><span id="clock-date">Carregando data</span></div>
+        ${action}
+      </div>
+    </header>`;
+}
+
+function updateClock() {
+  const now = new Date();
+  const time = document.querySelector("#clock-time");
+  const date = document.querySelector("#clock-date");
+  if (time) time.textContent = now.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+  if (date) date.textContent = now.toLocaleDateString("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "long"
+  });
+}
+
+function renderLoading(message = "Carregando projetos...") {
+  app.innerHTML = `<div class="loading-screen"><div class="spinner"></div><strong>${h(message)}</strong></div>`;
+}
+
+function renderError(error) {
+  console.error(error);
+  app.innerHTML = `
+    <div class="message-screen">
+      <h2>Não foi possível carregar os dados</h2>
+      <p>Verifique a conexão com a internet e tente novamente.</p>
+      <button class="btn btn-primary" onclick="location.reload()">Tentar novamente</button>
+    </div>`;
+}
+
+function renderDashboard() {
+  if (!projects.length) {
+    app.innerHTML = `${header(true)}<div class="message-screen"><h2>Nenhum projeto cadastrado</h2></div>`;
+    return;
+  }
+
+  const active = projects[activeIndex];
+  const totalBudget = projects.reduce((sum, item) => sum + Number(item.budget || 0), 0);
+  const totalSpent = projects.reduce((sum, item) => sum + Number(item.spent || 0), 0);
+  const attention = projects.filter(item => item.status === "atencao").length;
+  const delayed = projects.filter(item => item.status === "atrasado").length;
+  const average = Math.round(
+    projects.reduce((sum, item) => sum + percentage(item), 0) / projects.length
+  );
+  const investment = totalBudget ? Math.round((totalSpent / totalBudget) * 100) : 0;
+
+  app.innerHTML = `
+    <div class="shell">
+      ${header(true)}
+      <section class="dashboard">
+        <div class="stats">
+          <article class="stat"><span class="stat-label">Projetos acompanhados</span><strong class="stat-value">${projects.length}</strong><span class="stat-context">Secretaria de Obras</span></article>
+          <article class="stat"><span class="stat-label">Progresso médio</span><strong class="stat-value">${average}%</strong><span class="stat-context">Média dos projetos</span></article>
+          <article class="stat"><span class="stat-label">Em atenção</span><strong class="stat-value">${attention}</strong><span class="stat-context">Exigem acompanhamento</span></article>
+          <article class="stat"><span class="stat-label">Atrasados</span><strong class="stat-value">${delayed}</strong><span class="stat-context">Prazo comprometido</span></article>
+          <article class="stat"><span class="stat-label">Investimento executado</span><strong class="stat-value">${investment}%</strong><span class="stat-context">${formatCurrency(totalSpent)} de ${formatCurrency(totalBudget)}</span></article>
+        </div>
+
+        <div class="focus-grid">
+          <article class="focus-card">
+            <div class="focus-head">
+              <div><span class="section-label">Projeto em destaque</span><h2>${h(active.name)}</h2><p class="location">${h(active.location)}</p></div>
+              <span class="status ${h(active.status)}">${h(statusLabels[active.status] || active.status)}</span>
+            </div>
+            <div class="progress-block">
+              <div class="progress-top"><strong>${percentage(active)}%</strong><span>${formatNumber(active.completed)} de ${formatNumber(active.target)} ${h(active.unit)}</span></div>
+              <div class="progress"><div class="progress-bar" style="width:${percentage(active)}%"></div></div>
+            </div>
+            <div class="numbers">
+              <div class="number-box"><span>Meta</span><strong>${formatNumber(active.target)} ${h(active.unit)}</strong></div>
+              <div class="number-box"><span>Realizado</span><strong>${formatNumber(active.completed)} ${h(active.unit)}</strong></div>
+              <div class="number-box"><span>Restante</span><strong>${formatNumber(Math.max(0, active.target - active.completed))} ${h(active.unit)}</strong></div>
+            </div>
+            <div class="details">
+              <div class="detail"><span>Próxima etapa</span><strong>${h(active.nextStep)}</strong></div>
+              <div class="detail"><span>Impedimento atual</span><strong>${h(active.issue)}</strong></div>
+              <div class="detail"><span>Responsável</span><strong>${h(active.responsible)}</strong></div>
+              <div class="detail"><span>Prazo previsto</span><strong>${formatDate(active.deadline)}</strong></div>
+              <div class="detail"><span>Orçamento previsto</span><strong>${formatCurrency(active.budget)}</strong></div>
+              <div class="detail"><span>Valor executado</span><strong>${formatCurrency(active.spent)}</strong></div>
+            </div>
+          </article>
+
+          <aside class="project-list">
+            <div class="list-head"><h3>Projetos</h3><span class="countdown">Alterna em <b id="countdown">${secondsLeft}</b>s</span></div>
+            ${projects.map((project, index) => `
+              <button class="project-item ${index === activeIndex ? "active" : ""}" data-index="${index}">
+                <strong>${h(project.name)}</strong>
+                <span class="item-meta"><span>${h(statusLabels[project.status] || project.status)}</span><span>${percentage(project)}%</span></span>
+              </button>`).join("")}
+            <p class="updated">Última atualização: ${formatDateTime(active.updatedAt)}</p>
+          </aside>
+        </div>
+      </section>
+    </div>`;
+
+  document.querySelectorAll(".project-item").forEach(button => {
+    button.addEventListener("click", () => {
+      activeIndex = Number(button.dataset.index);
+      secondsLeft = 12;
+      renderDashboard();
+    });
+  });
+  updateClock();
+}
+
+function bindLogout() {
+  document.querySelector("#logout")?.addEventListener("click", async () => {
+    await db.auth.signOut();
+    currentSession = null;
+    renderLogin();
+  });
+}
+
+function renderLogin() {
+  app.innerHTML = `
+    <div class="shell">
+      ${header(false)}
+      <section class="login-wrap">
+        <form class="login-card" id="login-form">
+          <span class="section-label">Área restrita</span>
+          <h2>Entrar para atualizar</h2>
+          <p>Use o usuário autorizado da Secretaria de Obras.</p>
+          <div class="field"><label for="email">E-mail</label><input id="email" type="email" autocomplete="email" required /></div>
+          <div class="field"><label for="password">Senha</label><input id="password" type="password" autocomplete="current-password" required /></div>
+          <p class="form-error" id="login-error"></p>
+          <button class="btn btn-primary btn-wide" type="submit">Entrar</button>
+        </form>
+      </section>
+    </div>`;
+
+  const form = document.querySelector("#login-form");
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = form.querySelector("button");
+    const errorBox = document.querySelector("#login-error");
+    button.disabled = true;
+    button.textContent = "Entrando...";
+    errorBox.textContent = "";
+
+    const { data, error } = await db.auth.signInWithPassword({
+      email: document.querySelector("#email").value.trim(),
+      password: document.querySelector("#password").value
+    });
+
+    if (error) {
+      errorBox.textContent = "E-mail ou senha incorretos.";
+      button.disabled = false;
+      button.textContent = "Entrar";
+      return;
+    }
+
+    currentSession = data.session;
+    await fetchProjects();
+    renderAdmin();
+  });
+  updateClock();
+}
+
+function renderAdmin() {
+  app.innerHTML = `
+    <div class="shell">
+      ${header(false)}
+      <section class="admin-wrap">
+        <div class="admin-intro">
+          <div><h2>Atualização dos projetos</h2><p>Escolha um projeto, altere os dados e salve. A televisão receberá a atualização automaticamente.</p></div>
+          <span class="status no-prazo">Conectado ao Supabase</span>
+        </div>
+        <form class="admin-card" id="project-form">
+          <div class="form-grid">
+            <div class="field full"><label for="project-select">Projeto</label><select id="project-select">${projects.map((project, index) => `<option value="${index}">${h(project.name)}</option>`).join("")}</select></div>
+            <div class="field"><label for="completed">Quantidade realizada</label><input id="completed" type="number" min="0" step="1" required /></div>
+            <div class="field"><label for="target">Meta</label><input id="target" type="number" min="1" step="1" required /></div>
+            <div class="field"><label for="status">Situação</label><select id="status">${Object.entries(statusLabels).map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div>
+            <div class="field"><label for="spent">Valor executado (R$)</label><input id="spent" type="number" min="0" step="1000" required /></div>
+            <div class="field full"><label for="next-step">Próxima etapa</label><textarea id="next-step" required></textarea></div>
+            <div class="field full"><label for="issue">Problema ou impedimento</label><textarea id="issue" required></textarea></div>
+          </div>
+          <div class="form-summary">
+            <div class="summary-box"><span>Progresso calculado</span><strong id="summary-progress">0%</strong></div>
+            <div class="summary-box"><span>Quantidade restante</span><strong id="summary-remaining">0</strong></div>
+            <div class="summary-box"><span>Atualização</span><strong>Agora</strong></div>
+          </div>
+          <div class="form-actions form-actions-end">
+            <button class="btn btn-primary" id="save-button" type="submit">Salvar atualização</button>
+          </div>
+        </form>
+      </section>
+    </div>`;
+
+  bindLogout();
+  const select = document.querySelector("#project-select");
+  const form = document.querySelector("#project-form");
+  const saveButton = document.querySelector("#save-button");
+  const fields = {
+    completed: document.querySelector("#completed"),
+    target: document.querySelector("#target"),
+    status: document.querySelector("#status"),
+    spent: document.querySelector("#spent"),
+    nextStep: document.querySelector("#next-step"),
+    issue: document.querySelector("#issue")
+  };
+
+  function fillForm() {
+    const project = projects[Number(select.value)];
+    Object.entries(fields).forEach(([key, field]) => {
+      field.value = project[key] ?? "";
+    });
+    updateSummary();
+  }
+
+  function updateSummary() {
+    const target = Number(fields.target.value || 0);
+    const completed = Number(fields.completed.value || 0);
+    document.querySelector("#summary-progress").textContent = target
+      ? `${Math.min(100, Math.round((completed / target) * 100))}%`
+      : "0%";
+    document.querySelector("#summary-remaining").textContent =
+      formatNumber(Math.max(0, target - completed));
+  }
+
+  select.addEventListener("change", fillForm);
+  fields.completed.addEventListener("input", updateSummary);
+  fields.target.addEventListener("input", updateSummary);
+
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const index = Number(select.value);
+    const project = projects[index];
+    const update = {
+      completed: Number(fields.completed.value),
+      target: Number(fields.target.value),
+      status: fields.status.value,
+      spent: Number(fields.spent.value),
+      next_step: fields.nextStep.value.trim(),
+      issue: fields.issue.value.trim(),
+      updated_at: new Date().toISOString()
+    };
+
+    saveButton.disabled = true;
+    saveButton.textContent = "Salvando...";
+    const { data, error } = await db
+      .from("projects")
+      .update(update)
+      .eq("id", project.id)
+      .select()
+      .single();
+
+    if (error) {
+      showToast(`Não foi possível salvar: ${error.message}`, true);
+      saveButton.disabled = false;
+      saveButton.textContent = "Salvar atualização";
+      return;
+    }
+
+    const historyResult = await db.from("project_updates").insert({
+      project_id: project.id,
+      completed: update.completed,
+      spent: update.spent,
+      status: update.status,
+      next_step: update.next_step,
+      issue: update.issue
+    });
+    if (historyResult.error) console.error("Histórico não registrado", historyResult.error);
+
+    projects[index] = toProject(data);
+    saveButton.disabled = false;
+    saveButton.textContent = "Salvar atualização";
+    showToast("Atualização salva. O painel da TV já recebeu os novos dados.");
+  });
+
+  fillForm();
+  updateClock();
+}
+
+function showToast(message, isError = false) {
+  document.querySelector(".toast")?.remove();
+  const toast = document.createElement("div");
+  toast.className = `toast${isError ? " toast-error" : ""}`;
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 4200);
+}
+
+function startRotation() {
+  clearInterval(rotationTimer);
+  if (adminMode) return;
+  rotationTimer = setInterval(() => {
+    secondsLeft -= 1;
+    const countdown = document.querySelector("#countdown");
+    if (countdown) countdown.textContent = secondsLeft;
+    if (secondsLeft <= 0 && projects.length) {
+      activeIndex = (activeIndex + 1) % projects.length;
+      secondsLeft = 12;
+      renderDashboard();
+    }
+  }, 1000);
+}
+
+function subscribeToUpdates() {
+  if (realtimeChannel) db.removeChannel(realtimeChannel);
+  realtimeChannel = db
+    .channel("projects-live")
+    .on("postgres_changes", {
+      event: "*",
+      schema: "public",
+      table: "projects"
+    }, async () => {
+      try {
+        await fetchProjects();
+        renderDashboard();
+      } catch (error) {
+        console.error("Erro ao atualizar dados em tempo real", error);
+      }
+    })
+    .subscribe();
+}
+
+async function init() {
+  renderLoading();
+  try {
+    const { data } = await db.auth.getSession();
+    currentSession = data.session;
+
+    if (adminMode && !currentSession) {
+      renderLogin();
+      return;
+    }
+
+    await fetchProjects();
+    if (adminMode) {
+      renderAdmin();
+    } else {
+      renderDashboard();
+      subscribeToUpdates();
+      startRotation();
+    }
+  } catch (error) {
+    renderError(error);
+  }
+}
+
+setInterval(updateClock, 30000);
+init();
