@@ -23,6 +23,25 @@ const DISPLAY_MODE_KEY = "painel-obras-display-mode";
 const ROTATION_INTERVAL_KEY = "painel-obras-rotation-interval";
 const ROTATION_INTERVALS = [10, 20, 30];
 const OVERVIEW_PAGE_SIZE = 6;
+const DEPARTMENTS = [
+  "Secretaria da Casa Civil",
+  "Secretaria de Administração",
+  "Secretaria de Assistência Social",
+  "Secretaria de Cultura e Turismo",
+  "Secretaria de Desenvolvimento Econômico",
+  "Secretaria de Educação",
+  "Secretaria de Esportes",
+  "Secretaria de Governo",
+  "Secretaria de Meio Ambiente",
+  "Secretaria de Mobilidade Urbana",
+  "Secretaria de Negócios Jurídicos",
+  "Secretaria de Obras",
+  "Secretaria de Planejamento e Finanças",
+  "Secretaria de Saúde",
+  "Secretaria de Segurança Pública",
+  "Secretaria de Serviços Públicos",
+  "Secretaria de Tributação e Fiscalização"
+];
 
 function readPreference(key, fallback) {
   try {
@@ -51,6 +70,7 @@ let overviewPage = 0;
 let rotationTimer;
 let realtimeChannel;
 let currentSession = null;
+let currentProfile = null;
 
 function h(value) {
   return String(value ?? "")
@@ -64,6 +84,7 @@ function h(value) {
 function toProject(row) {
   return {
     id: row.id,
+    department: row.department,
     slug: row.slug,
     name: row.name,
     description: row.description,
@@ -81,6 +102,14 @@ function toProject(row) {
     issue: row.issue,
     updatedAt: row.updated_at
   };
+}
+
+async function fetchProfile() {
+  if (!currentSession?.user?.id) return null;
+  const { data, error } = await db.from("profiles").select("*").eq("id", currentSession.user.id).single();
+  if (error) throw error;
+  currentProfile = data;
+  return data;
 }
 
 async function fetchProjects() {
@@ -166,7 +195,7 @@ function header(showAdminLink = true, showDashboardControls = false) {
         <div class="brand-mark">BO</div>
         <div>
           <p class="eyebrow">Painel executivo municipal</p>
-          <h1>Secretaria de Obras</h1>
+          <h1>Prefeitura de Birigui</h1>
         </div>
       </div>
       <div class="top-actions">
@@ -219,7 +248,7 @@ function dashboardStats() {
 
   return `
     <div class="stats">
-      <article class="stat"><span class="stat-label">Projetos acompanhados</span><strong class="stat-value">${projects.length}</strong><span class="stat-context">Secretaria de Obras</span></article>
+      <article class="stat"><span class="stat-label">Projetos acompanhados</span><strong class="stat-value">${projects.length}</strong><span class="stat-context">Todas as secretarias</span></article>
       <article class="stat"><span class="stat-label">Progresso médio</span><strong class="stat-value">${average}%</strong><span class="stat-context">Média dos projetos</span></article>
       <article class="stat"><span class="stat-label">Em atenção</span><strong class="stat-value">${attention}</strong><span class="stat-context">Exigem acompanhamento</span></article>
       <article class="stat"><span class="stat-label">Atrasados</span><strong class="stat-value">${delayed}</strong><span class="stat-context">Prazo comprometido</span></article>
@@ -366,6 +395,7 @@ function bindLogout() {
   document.querySelector("#logout")?.addEventListener("click", async () => {
     await db.auth.signOut();
     currentSession = null;
+    currentProfile = null;
     renderLogin();
   });
 }
@@ -378,7 +408,7 @@ function renderLogin() {
         <form class="login-card" id="login-form">
           <span class="section-label">Área restrita</span>
           <h2>Entrar para atualizar</h2>
-          <p>Use o usuário autorizado da Secretaria de Obras.</p>
+          <p>Use o usuário autorizado da sua secretaria.</p>
           <div class="field"><label for="email">E-mail</label><input id="email" type="email" autocomplete="email" required /></div>
           <div class="field"><label for="password">Senha</label><input id="password" type="password" autocomplete="current-password" required /></div>
           <p class="form-error" id="login-error"></p>
@@ -409,6 +439,7 @@ function renderLogin() {
     }
 
     currentSession = data.session;
+    await fetchProfile();
     await fetchProjects();
     renderAdmin();
   });
@@ -416,21 +447,26 @@ function renderLogin() {
 }
 
 function renderAdmin() {
+  const isAdministrator = currentProfile?.role === "admin";
+  const allowedDepartments = isAdministrator ? DEPARTMENTS : [currentProfile.department];
+  const initialDepartment = allowedDepartments.includes(currentProfile?.department) ? currentProfile.department : allowedDepartments[0];
   app.innerHTML = `
     <div class="shell">
       ${header(false)}
       <section class="admin-wrap">
         <div class="admin-intro">
-          <div><h2>Gerenciamento dos projetos</h2><p>Cadastre ou atualize projetos. A televisão receberá as alterações automaticamente.</p></div>
+          <div><h2>Gerenciamento dos projetos</h2><p>${isAdministrator ? "Administração geral" : h(currentProfile.department)} · cadastre ou atualize projetos.</p></div>
           <span class="status no-prazo">Conectado ao Supabase</span>
         </div>
+        ${isAdministrator ? `<nav class="management-menu"><button class="management-link active" type="button">Projetos</button><button class="management-link" id="users-menu" type="button">Usuários</button></nav>` : ""}
         <div class="admin-tabs" role="tablist" aria-label="Ação administrativa">
           <button class="admin-tab active" id="edit-mode" type="button">Atualizar projeto</button>
           <button class="admin-tab" id="create-mode" type="button">Novo projeto</button>
         </div>
         <form class="admin-card" id="project-form">
           <div class="form-grid">
-            <div class="field full" id="project-select-field"><label for="project-select">Projeto</label><select id="project-select">${projects.map((project, index) => `<option value="${index}">${h(project.name)}</option>`).join("")}</select></div>
+            <div class="field"><label for="department-select">Secretaria</label><select id="department-select" ${isAdministrator ? "" : "disabled"}>${allowedDepartments.map(department => `<option value="${h(department)}" ${department === initialDepartment ? "selected" : ""}>${h(department)}</option>`).join("")}</select></div>
+            <div class="field" id="project-select-field"><label for="project-select">Projeto</label><select id="project-select"></select></div>
             <div class="field full"><label for="name">Nome do projeto</label><input id="name" type="text" required /></div>
             <div class="field full"><label for="description">Descrição</label><textarea id="description"></textarea></div>
             <div class="field"><label for="location">Localização</label><input id="location" type="text" /></div>
@@ -460,6 +496,8 @@ function renderAdmin() {
     </div>`;
 
   bindLogout();
+  document.querySelector("#users-menu")?.addEventListener("click", renderUserManagement);
+  const departmentSelect = document.querySelector("#department-select");
   const select = document.querySelector("#project-select");
   const selectField = document.querySelector("#project-select-field");
   const form = document.querySelector("#project-form");
@@ -485,8 +523,21 @@ function renderAdmin() {
     issue: document.querySelector("#issue")
   };
 
+  function departmentProjects() {
+    return projects.filter(project => project.department === departmentSelect.value);
+  }
+
+  function refreshProjectOptions(preferredId) {
+    const filtered = departmentProjects();
+    select.innerHTML = filtered.length
+      ? filtered.map(project => `<option value="${project.id}">${h(project.name)}</option>`).join("")
+      : '<option value="">Nenhum projeto nesta secretaria</option>';
+    if (preferredId && filtered.some(project => String(project.id) === String(preferredId))) select.value = String(preferredId);
+    editModeButton.disabled = filtered.length === 0;
+  }
+
   function fillForm() {
-    const project = projects[Number(select.value)];
+    const project = projects.find(item => String(item.id) === select.value);
     if (!project) return;
     Object.entries(fields).forEach(([key, field]) => {
       field.value = project[key] ?? "";
@@ -501,7 +552,7 @@ function renderAdmin() {
     fields.target.value = 1;
     fields.budget.value = 0;
     fields.spent.value = 0;
-    fields.responsible.value = "Secretaria Municipal de Obras";
+    fields.responsible.value = departmentSelect.value;
     fields.issue.value = "Nenhum impedimento relevante.";
     updateSummary();
   }
@@ -528,6 +579,10 @@ function renderAdmin() {
   }
 
   select.addEventListener("change", fillForm);
+  departmentSelect.addEventListener("change", () => {
+    refreshProjectOptions();
+    setFormMode(departmentProjects().length ? "edit" : "create");
+  });
   editModeButton.addEventListener("click", () => setFormMode("edit"));
   createModeButton.addEventListener("click", () => setFormMode("create"));
   fields.completed.addEventListener("input", updateSummary);
@@ -535,8 +590,7 @@ function renderAdmin() {
 
   form.addEventListener("submit", async event => {
     event.preventDefault();
-    const index = Number(select.value);
-    const project = projects[index];
+    const project = projects.find(item => String(item.id) === select.value);
     const values = {
       name: fields.name.value.trim(),
       description: fields.description.value.trim() || null,
@@ -558,7 +612,7 @@ function renderAdmin() {
     saveButton.disabled = true;
     saveButton.textContent = isCreating ? "Cadastrando..." : "Salvando...";
     const query = isCreating
-      ? db.from("projects").insert({ ...values, slug: createUniqueSlug(values.name), department: "Secretaria de Obras" })
+      ? db.from("projects").insert({ ...values, slug: createUniqueSlug(values.name), department: departmentSelect.value })
       : db.from("projects").update(values).eq("id", project.id);
     const { data, error } = await query.select().single();
 
@@ -582,11 +636,14 @@ function renderAdmin() {
     }
 
     await fetchProjects();
-    const savedIndex = projects.findIndex(item => item.id === data.id);
+    const savedProject = projects.find(item => item.id === data.id);
     renderAdmin();
+    const refreshedDepartment = document.querySelector("#department-select");
     const refreshedSelect = document.querySelector("#project-select");
-    if (savedIndex >= 0 && refreshedSelect) {
-      refreshedSelect.value = String(savedIndex);
+    if (savedProject && refreshedDepartment && refreshedSelect) {
+      refreshedDepartment.value = savedProject.department;
+      refreshedDepartment.dispatchEvent(new Event("change"));
+      refreshedSelect.value = String(savedProject.id);
       refreshedSelect.dispatchEvent(new Event("change"));
     }
     showToast(isCreating
@@ -595,7 +652,7 @@ function renderAdmin() {
   });
 
   deleteButton.addEventListener("click", async () => {
-    const project = projects[Number(select.value)];
+    const project = projects.find(item => String(item.id) === select.value);
     if (!project) return;
     const typedName = window.prompt(
       `Esta exclusão é permanente. Para excluir, digite exatamente o nome do projeto:\n\n${project.name}`
@@ -621,7 +678,58 @@ function renderAdmin() {
     showToast("Projeto excluído do painel.");
   });
 
-  setFormMode(isCreating ? "create" : "edit");
+  refreshProjectOptions();
+  setFormMode(departmentProjects().length ? "edit" : "create");
+  updateClock();
+}
+
+async function renderUserManagement() {
+  if (currentProfile?.role !== "admin") return renderAdmin();
+  app.innerHTML = `
+    <div class="shell">${header(false)}<section class="admin-wrap">
+      <div class="admin-intro"><div><h2>Usuários e acessos</h2><p>Somente administradores podem cadastrar acessos.</p></div><span class="status no-prazo">Administrador</span></div>
+      <nav class="management-menu"><button class="management-link" id="projects-menu" type="button">Projetos</button><button class="management-link active" type="button">Usuários</button></nav>
+      <div class="users-layout">
+        <form class="admin-card" id="user-form"><h3>Novo usuário</h3>
+          <div class="field"><label for="user-email">E-mail</label><input id="user-email" type="email" required /></div>
+          <div class="field"><label for="user-password">Senha inicial</label><input id="user-password" type="password" minlength="8" required /></div>
+          <div class="field"><label for="user-department">Secretaria</label><select id="user-department">${DEPARTMENTS.map(department => `<option value="${h(department)}">${h(department)}</option>`).join("")}</select></div>
+          <div class="field"><label for="user-role">Permissão</label><select id="user-role"><option value="user">Usuário da secretaria</option><option value="admin">Administrador</option></select></div>
+          <button class="btn btn-primary btn-wide" type="submit">Cadastrar usuário</button>
+        </form>
+        <section class="admin-card"><h3>Usuários cadastrados</h3><div id="users-list" class="users-list"><p>Carregando...</p></div></section>
+      </div>
+    </section></div>`;
+  bindLogout();
+  document.querySelector("#projects-menu").addEventListener("click", renderAdmin);
+
+  async function loadUsers() {
+    const response = await fetch("/api/admin-users", { headers: { Authorization: `Bearer ${currentSession.access_token}` } });
+    const result = await response.json();
+    if (!response.ok) throw new Error(result.error || "Não foi possível consultar os usuários.");
+    document.querySelector("#users-list").innerHTML = result.users.map(user => `<article class="user-row"><div><strong>${h(user.email)}</strong><span>${h(user.department || "Sem secretaria")}</span></div><span class="role-badge">${user.role === "admin" ? "Administrador" : "Secretaria"}</span></article>`).join("") || "<p>Nenhum usuário cadastrado.</p>";
+  }
+
+  document.querySelector("#user-form").addEventListener("submit", async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector("button[type=submit]");
+    button.disabled = true;
+    button.textContent = "Cadastrando...";
+    try {
+      const response = await fetch("/api/admin-users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${currentSession.access_token}` },
+        body: JSON.stringify({ email: document.querySelector("#user-email").value.trim(), password: document.querySelector("#user-password").value, department: document.querySelector("#user-department").value, role: document.querySelector("#user-role").value })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || "Não foi possível cadastrar o usuário.");
+      event.currentTarget.reset();
+      showToast("Usuário cadastrado com sucesso.");
+      await loadUsers();
+    } catch (error) { showToast(error.message, true); }
+    finally { button.disabled = false; button.textContent = "Cadastrar usuário"; }
+  });
+  loadUsers().catch(error => { document.querySelector("#users-list").innerHTML = `<p class="form-error">${h(error.message)}</p>`; });
   updateClock();
 }
 
@@ -683,6 +791,8 @@ async function init() {
       renderLogin();
       return;
     }
+
+    if (adminMode) await fetchProfile();
 
     await fetchProjects();
     if (adminMode) {

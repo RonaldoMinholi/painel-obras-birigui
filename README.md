@@ -1,6 +1,25 @@
-# Painel executivo — Secretaria de Obras
+# Painel executivo — Prefeitura de Birigui
 
 Piloto de acompanhamento de projetos municipais conectado ao Supabase e preparado para hospedagem na Vercel.
+
+## Versão com usuários por secretaria
+
+- 17 secretarias cadastradas.
+- Administrador principal: `rominholi@yahoo.com`.
+- Administrador visualiza todas as secretarias e cadastra usuários.
+- Usuários comuns alteram somente projetos da própria secretaria.
+- A seleção de atualização é feita primeiro pela secretaria e depois pelo projeto.
+- O painel público da TV não exige login.
+
+### Instalação desta atualização
+
+1. No SQL Editor do Supabase, execute apenas `supabase-users-departments.sql`.
+2. Na Vercel, abra **Settings > Environment Variables** e crie:
+   - `SUPABASE_URL`: URL do projeto Supabase.
+   - `SUPABASE_ANON_KEY`: chave pública/anon do Supabase.
+   - `SUPABASE_SERVICE_ROLE_KEY`: chave `service_role` do Supabase. Nunca coloque essa chave no `app.js`.
+3. Envie todos os arquivos e a pasta `api` para o GitHub e faça o commit.
+4. Aguarde o novo deployment da Vercel ficar `Ready`.
 
 ## Visualização local
 
