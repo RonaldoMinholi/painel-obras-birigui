@@ -456,7 +456,6 @@ function renderAdmin() {
       <section class="admin-wrap">
         <div class="admin-intro">
           <div><h2>Gerenciamento dos projetos</h2><p>${isAdministrator ? "Administração geral" : h(currentProfile.department)} · cadastre ou atualize projetos.</p></div>
-          <span class="status no-prazo">Conectado ao Supabase</span>
         </div>
         ${isAdministrator ? `<nav class="management-menu"><button class="management-link active" type="button">Projetos</button><button class="management-link" id="users-menu" type="button">Usuários</button></nav>` : ""}
         <div class="admin-tabs" role="tablist" aria-label="Ação administrativa">
@@ -546,7 +545,9 @@ function renderAdmin() {
   }
 
   function clearForm() {
+    const selectedDepartment = departmentSelect.value;
     form.reset();
+    departmentSelect.value = selectedDepartment;
     fields.status.value = "nao-iniciado";
     fields.completed.value = 0;
     fields.target.value = 1;
@@ -580,8 +581,11 @@ function renderAdmin() {
 
   select.addEventListener("change", fillForm);
   departmentSelect.addEventListener("change", () => {
+    const selectedDepartment = departmentSelect.value;
     refreshProjectOptions();
     setFormMode(departmentProjects().length ? "edit" : "create");
+    departmentSelect.value = selectedDepartment;
+    if (isCreating) fields.responsible.value = selectedDepartment;
   });
   editModeButton.addEventListener("click", () => setFormMode("edit"));
   createModeButton.addEventListener("click", () => setFormMode("create"));
